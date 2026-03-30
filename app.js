@@ -739,12 +739,17 @@ function renderCustomers(){
     </div>
     <!-- Pay Debt Modal -->
     <div class="modal-backdrop" id="modal-pay" onclick="if(event.target===this)closeModal('modal-pay')">
-      <div class="modal" style="max-width:400px">
+      <div class="modal" style="max-width:450px">
         <div class="modal-header"><span class="modal-title">💳 تسديد دين</span><button class="modal-close" onclick="closeModal('modal-pay')">×</button></div>
         <div class="modal-body">
           <p id="pay-info" style="font-size:13px;margin-bottom:12px;color:var(--text-muted)"></p>
-          <div class="form-group"><label class="form-label">المبلغ المدفوع (ج.م) *</label><input class="form-control" id="pay-amount" type="number" min="1"></div>
-          <div class="form-group"><label class="form-label">ملاحظة</label><input class="form-control" id="pay-note" placeholder="دفعة، تسوية..."></div>
+          <div class="form-group"><label class="form-label">المبلغ المدفوع (ج.م) *</label><input class="form-control" id="pay-amount" type="number" min="1" oninput="updatePaymentPreview()"></div>
+          <div id="pay-preview" style="background:rgba(34,197,94,.08);border-left:3px solid var(--success);padding:10px 12px;border-radius:4px;margin-bottom:15px;font-size:13px;display:none">
+            <div style="margin-bottom:6px">الرصيد المستحق: <strong id="prev-balance" style="color:var(--text)"></strong></div>
+            <div style="margin-bottom:6px">المبلغ المدفوع: <strong id="prev-amount" style="color:var(--primary)"></strong></div>
+            <div style="border-top:1px solid rgba(34,197,94,.2);padding-top:6px;margin-top:6px">الرصيد المتبقي: <strong id="prev-remaining" style="color:var(--success)"></strong></div>
+          </div>
+          <div class="form-group"><label class="form-label">ملاحظة</label><input class="form-control" id="pay-note" placeholder="دفعة أولى، تسوية نهائية..."></div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-success" onclick="savePayment()">✓ تأكيد السداد</button>
@@ -897,24 +902,64 @@ function openPayModal(customerId){
   const c=DB.get('customers').find(x=>x.id===customerId);
   if(!c)return;
   State.editId=customerId;
+  State.paymentBalance=c.balance;// Store current balance for validation
   document.getElementById('pay-info').textContent=`العميل: ${c.name} | الرصيد المستحق: ${EGP(c.balance)}`;
   document.getElementById('pay-amount').value=c.balance;
   document.getElementById('pay-note').value='';
+  document.getElementById('pay-preview').style.display='none';
   openModal('modal-pay');
+}
+function updatePaymentPreview(){
+  const balance=State.paymentBalance||0;
+  const amount=parseFloat(document.getElementById('pay-amount')?.value)||0;
+  const remaining=Math.max(0,balance-amount);
+  const prevBox=document.getElementById('pay-preview');
+  if(amount>0){
+    document.getElementById('prev-balance').textContent=EGP(balance);
+    document.getElementById('prev-amount').textContent=EGP(amount);
+    document.getElementById('prev-remaining').textContent=EGP(remaining);
+    prevBox.style.display='block';
+    if(amount>balance){
+      prevBox.style.background='rgba(239,68,68,.08)';
+      prevBox.style.borderLeftColor='var(--danger)';
+      document.getElementById('prev-remaining').style.color='var(--danger)';
+      document.getElementById('prev-remaining').textContent=`❌ المبلغ يتجاوز الرصيد`;
+    }else{
+      prevBox.style.background='rgba(34,197,94,.08)';
+      prevBox.style.borderLeftColor='var(--success)';
+      document.getElementById('prev-remaining').style.color='var(--success)';
+      document.getElementById('prev-remaining').textContent=EGP(remaining);
+    }
+  }else{
+    prevBox.style.display='none';
+  }
 }
 
 function savePayment(){
   const amount=parseFloat(document.getElementById('pay-amount')?.value)||0;
   const note=document.getElementById('pay-note')?.value.trim();
+  const balance=State.paymentBalance||0;
+  
   if(amount<=0)return showToast('المبلغ يجب أن يكون أكبر من صفر','danger');
+  if(amount>balance)return showToast(`❌ المبلغ يتجاوز الرصيد المستحق (${EGP(balance)})`,'danger');
+  
   const customers=DB.get('customers');
   const idx=customers.findIndex(c=>c.id===State.editId);
-  if(idx!==-1){customers[idx].balance=Math.max(0,customers[idx].balance-amount);}
+  const prevBalance=customers[idx]?.balance||0;
+  const newBalance=Math.max(0,prevBalance-amount);
+  
+  if(idx!==-1){customers[idx].balance=newBalance;}
   DB.set('customers',customers);
+  
   const payments=DB.get('payments');
-  payments.push({id:nid('payment'),date:today(),customerId:State.editId,amount,note,type:'payment'});
+  payments.push({id:nid('payment'),date:today(),customerId:State.editId,amount,note:note||'سداد',type:'payment'});
   DB.set('payments',payments);
-  showToast(`✓ تم تسجيل سداد ${EGP(amount)}`);
+  
+  // Show detailed confirmation
+  const msg=newBalance>0
+    ?`✓ تم تسجيل سداد ${EGP(amount)} | الرصيد المتبقي: ${EGP(newBalance)}`
+    :`✓ تم سداد الرصيد بالكامل! (${EGP(amount)})`;
+  showToast(msg);
   closeModal('modal-pay');
   openCustomerProfile(State.editId);
 }
